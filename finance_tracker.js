@@ -24,6 +24,7 @@ const googleSigninBtn = document.getElementById('google-signin');
 const signoutBtn = document.getElementById('signout-btn');
 const menuToggle = document.getElementById('menu-toggle');
 const sidebar = document.getElementById('sidebar');
+const sidebarClose = document.getElementById('sidebar-close');
 const navLinks = document.querySelectorAll('.nav-link');
 const pages = document.querySelectorAll('.page');
 const addTransactionBtns = document.querySelectorAll('#add-transaction-btn, #add-transaction-btn2');
@@ -104,11 +105,67 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Mobile menu toggle
-    menuToggle.addEventListener('click', () => {
-        sidebar.classList.add('active');
-        sidebarOverlay.classList.add('active');
-    });
+    // Function to open sidebar
+    function openSidebar() {
+        if (sidebar && sidebarOverlay) {
+            sidebar.classList.add('active');
+            sidebarOverlay.classList.add('active');
+        }
+    }
+
+    // Mobile menu toggle - dashboard (from mobile-header)
+    if (menuToggle) {
+        menuToggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSidebar();
+        });
+    }
+
+    // Mobile menu toggle - dashboard (from dashboard-top-header)
+    const menuToggleDashboard = document.getElementById('menu-toggle-dashboard');
+    if (menuToggleDashboard) {
+        menuToggleDashboard.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSidebar();
+        });
+    }
+
+    // Mobile menu toggle - analytics
+    const menuToggleAnalytics = document.getElementById('menu-toggle-analytics');
+    if (menuToggleAnalytics) {
+        menuToggleAnalytics.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSidebar();
+        });
+    }
+
+    // Mobile menu toggle - transactions
+    const menuToggleTransactions = document.getElementById('menu-toggle-transactions');
+    if (menuToggleTransactions) {
+        menuToggleTransactions.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSidebar();
+        });
+    }
+
+    // Mobile menu toggle - settings
+    const menuToggleSettings = document.getElementById('menu-toggle-settings');
+    if (menuToggleSettings) {
+        menuToggleSettings.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openSidebar();
+        });
+    }
+
+    // Close sidebar button
+    if (sidebarClose) {
+        sidebarClose.addEventListener('click', closeMobileSidebar);
+    }
 
     // Close sidebar when clicking overlay
     sidebarOverlay.addEventListener('click', closeMobileSidebar);
@@ -436,6 +493,7 @@ function setupRealtimeListeners() {
             // Update UI
             loadTransactions();
             updateDashboardStats();
+            updateChartVisualization();
             updateAnalytics();
             
         }, (error) => {
@@ -779,18 +837,18 @@ function updateChartVisualization() {
     const chartContainer = document.getElementById('chart-visualization');
     if (!chartContainer) return;
     
-    // Get last 7 days of transactions
+    // Get last 30 days of transactions for balance trend
     const now = new Date();
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(now.getDate() - 7);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(now.getDate() - 30);
     
-    // Group transactions by day
+    // Group transactions by day and calculate running balance
     const dailyData = {};
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i <= 30; i++) {
         const date = new Date();
-        date.setDate(now.getDate() - i);
+        date.setDate(now.getDate() - (30 - i));
         const dateStr = date.toISOString().split('T')[0];
-        dailyData[dateStr] = { income: 0, expense: 0 };
+        dailyData[dateStr] = { income: 0, expense: 0, balance: 0 };
     }
     
     // Calculate daily totals
@@ -805,54 +863,86 @@ function updateChartVisualization() {
         }
     });
     
-    // Convert to array and reverse for chronological order
+    // Calculate running balance
+    let runningBalance = 0;
     const chartData = Object.entries(dailyData)
         .sort((a, b) => new Date(a[0]) - new Date(b[0]))
-        .map(([date, data]) => ({
-            date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            income: data.income,
-            expense: data.expense,
-            net: data.income - data.expense
-        }));
+        .map(([date, data]) => {
+            runningBalance += data.income - data.expense;
+            return {
+                date: new Date(date),
+                dateStr: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                balance: runningBalance
+            };
+        });
     
-    // Find max amount for scaling
-    const maxNet = Math.max(...chartData.map(d => Math.abs(d.net)), 100);
+    // If no transactions, show empty state
+    if (chartData.length === 0 || chartData.every(d => d.balance === 0)) {
+        chartContainer.innerHTML = '<div class="empty-state" style="padding: 2rem;"><p style="color: var(--gray-color);">No data available</p></div>';
+        return;
+    }
     
-    let chartHTML = '';
-    chartData.forEach((data, index) => {
-        const heightPercentage = Math.abs(data.net) / maxNet * 80;
-        const barColor = data.net >= 0 ? 'var(--success-color)' : 'var(--danger-color)';
-        
-        chartHTML += `
-            <div class="chart-bar-container">
-                <div class="chart-bar" style="height: ${heightPercentage}%; background-color: ${barColor};"></div>
-                <span class="chart-label">${data.date}</span>
-            </div>
-        `;
+    // Find min and max balance for scaling
+    const balances = chartData.map(d => d.balance);
+    const minBalance = Math.min(...balances, 0);
+    const maxBalance = Math.max(...balances, 1000);
+    const range = maxBalance - minBalance || 1000;
+    
+    // Chart dimensions
+    const width = chartContainer.offsetWidth || 600;
+    const height = chartContainer.offsetHeight || 200;
+    const padding = { top: 10, right: 10, bottom: 10, left: 10 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    
+    // Create SVG for line chart
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.overflow = 'visible';
+    
+    // Create line path
+    const points = chartData.map((data, index) => {
+        const x = padding.left + (index / (chartData.length - 1 || 1)) * chartWidth;
+        const y = padding.top + chartHeight - ((data.balance - minBalance) / range) * chartHeight;
+        return { x, y, balance: data.balance, date: data.dateStr };
     });
     
-    chartContainer.innerHTML = chartHTML;
-    
-    // Update legend
-    const legend = document.createElement('div');
-    legend.className = 'chart-legend';
-    legend.innerHTML = `
-        <div class="chart-legend-item">
-            <div class="chart-legend-color" style="background-color: var(--success-color);"></div>
-            <span>Income</span>
-        </div>
-        <div class="chart-legend-item">
-            <div class="chart-legend-color" style="background-color: var(--danger-color);"></div>
-            <span>Expense</span>
-        </div>
-    `;
-    
-    // Remove existing legend and add new one
-    const existingLegend = chartContainer.querySelector('.chart-legend');
-    if (existingLegend) {
-        existingLegend.remove();
+    // Draw line
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    let pathData = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+        pathData += ` L ${points[i].x} ${points[i].y}`;
     }
-    chartContainer.appendChild(legend);
+    path.setAttribute('d', pathData);
+    path.setAttribute('class', 'chart-line');
+    path.setAttribute('stroke', '#10b981');
+    path.setAttribute('stroke-width', '2.5');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+    
+    // Add date labels on x-axis (show some dates, not all)
+    const labelInterval = Math.max(1, Math.floor(chartData.length / 6));
+    points.forEach((point, index) => {
+        if (index % labelInterval === 0 || index === points.length - 1) {
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', point.x);
+            text.setAttribute('y', height - padding.bottom + 15);
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('font-size', '11');
+            text.setAttribute('fill', '#6b7280');
+            text.setAttribute('font-weight', '500');
+            text.textContent = point.date;
+            svg.appendChild(text);
+        }
+    });
+    
+    chartContainer.innerHTML = '';
+    chartContainer.appendChild(svg);
 }
 
 async function updateAnalytics() {
@@ -864,12 +954,10 @@ async function updateAnalytics() {
         document.getElementById('transactions-count').textContent = '0';
         document.getElementById('transactions-breakdown').textContent = '0 expenses, 0 incomes';
         
-        document.getElementById('pie-chart').innerHTML = `
-            <div class="empty-state">
-                <p>No data for analytics</p>
-            </div>
-        `;
-        document.getElementById('category-legend').innerHTML = '';
+        const pieChart = document.getElementById('pie-chart');
+        const legend = document.getElementById('category-legend');
+        if (pieChart) pieChart.innerHTML = `<div class="empty-state"><p>No data for analytics</p></div>`;
+        if (legend) legend.innerHTML = '';
         return;
     }
     
@@ -948,8 +1036,9 @@ async function updateAnalytics() {
         document.getElementById('transactions-breakdown').textContent = 
             `${expenseCount} expenses, ${incomeCount} incomes`;
         
-        // Update pie chart
+        // Update charts
         updatePieChart(categoryTotals);
+        updateIncomeExpenseChart(filteredTransactions, period);
         
     } catch (error) {
         console.error('Update analytics error:', error);
@@ -959,6 +1048,8 @@ async function updateAnalytics() {
 function updatePieChart(categoryTotals) {
     const pieChart = document.getElementById('pie-chart');
     const legend = document.getElementById('category-legend');
+    
+    if (!pieChart || !legend) return;
     
     if (Object.keys(categoryTotals).length === 0) {
         pieChart.innerHTML = `
@@ -970,34 +1061,39 @@ function updatePieChart(categoryTotals) {
         return;
     }
     
-    // Calculate percentages
+    // Calculate percentages and sort by amount
     const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
-    const colors = [
-        'var(--primary-color)',
-        'var(--success-color)',
-        'var(--warning-color)',
-        'var(--danger-color)',
-        '#8b5cf6',
-        '#db2777',
-        '#0ea5e9',
-        '#10b981',
-        '#f59e0b'
-    ];
+    
+    // Category colors matching the image
+    const categoryColors = {
+        'Food': '#10b981',        // Dark green
+        'Transportation': '#3b82f6',  // Light blue
+        'Entertainment': '#f59e0b',   // Orange
+        'Utilities': '#ef4444',       // Red
+        'Shopping': '#8b5cf6',        // Purple
+        'Healthcare': '#ec4899',      // Pink
+        'Salary': '#10b981',           // Green
+        'Freelance': '#06b6d4'        // Cyan
+    };
+    
+    const defaultColors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
     
     // Create pie chart segments
-    let accumulatedAngle = 0;
+    let accumulatedAngle = -90; // Start from top
     const segments = [];
-    const categoriesArray = Object.entries(categoryTotals);
+    const categoriesArray = Object.entries(categoryTotals)
+        .sort((a, b) => b[1] - a[1]); // Sort by amount descending
     
     categoriesArray.forEach(([category, amount], index) => {
         const percentage = (amount / total) * 100;
         const angle = (percentage / 100) * 360;
+        const color = categoryColors[category] || defaultColors[index % defaultColors.length];
         
         segments.push({
             category,
             amount,
             percentage,
-            color: colors[index % colors.length],
+            color: color,
             startAngle: accumulatedAngle,
             endAngle: accumulatedAngle + angle
         });
@@ -1005,34 +1101,166 @@ function updatePieChart(categoryTotals) {
         accumulatedAngle += angle;
     });
     
-    // Create pie chart visualization
-    const pieChartHTML = `
-        <div class="pie-chart-visual">
-            ${segments.map(segment => `
-                <div class="pie-segment" style="
-                    background-color: ${segment.color};
-                    transform: rotate(${segment.startAngle}deg);
-                    clip-path: polygon(50% 50%, 50% 0%, ${50 + 50 * Math.cos(segment.startAngle * Math.PI / 180)}% ${50 + 50 * Math.sin(segment.startAngle * Math.PI / 180)}%);
-                "></div>
-            `).join('')}
-        </div>
-    `;
+    // Create SVG pie chart
+    const size = 200;
+    const center = size / 2;
+    const radius = size / 2 - 10;
     
-    pieChart.innerHTML = pieChartHTML;
+    let svgHTML = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`;
     
-    // Update legend
+    segments.forEach(segment => {
+        const startAngleRad = (segment.startAngle * Math.PI) / 180;
+        const endAngleRad = (segment.endAngle * Math.PI) / 180;
+        
+        const x1 = center + radius * Math.cos(startAngleRad);
+        const y1 = center + radius * Math.sin(startAngleRad);
+        const x2 = center + radius * Math.cos(endAngleRad);
+        const y2 = center + radius * Math.sin(endAngleRad);
+        
+        const largeArc = segment.endAngle - segment.startAngle > 180 ? 1 : 0;
+        
+        const pathData = [
+            `M ${center} ${center}`,
+            `L ${x1} ${y1}`,
+            `A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`,
+            'Z'
+        ].join(' ');
+        
+        svgHTML += `<path d="${pathData}" fill="${segment.color}" stroke="#fff" stroke-width="2"/>`;
+    });
+    
+    svgHTML += '</svg>';
+    pieChart.innerHTML = svgHTML;
+    
+    // Update legend with amounts
     let legendHTML = '';
     segments.forEach(segment => {
-        const roundedPercentage = Math.round(segment.percentage);
         legendHTML += `
-            <div class="category-legend-item">
-                <div class="category-color" style="background-color: ${segment.color};"></div>
-                <span>${segment.category} (${roundedPercentage}%)</span>
+            <div class="category-legend-item" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <div class="category-color" style="width: 12px; height: 12px; border-radius: 2px; background-color: ${segment.color};"></div>
+                <span style="font-size: 0.9rem; color: var(--dark-color);">${segment.category}: ${formatCurrency(segment.amount, userPreferences.currency)}</span>
             </div>
         `;
     });
     
     legend.innerHTML = legendHTML;
+}
+
+function updateIncomeExpenseChart(transactions, period) {
+    const chartContainer = document.getElementById('income-expense-chart');
+    const legend = document.getElementById('income-expense-legend');
+    
+    if (!chartContainer || !legend) return;
+    
+    if (transactions.length === 0) {
+        chartContainer.innerHTML = `
+            <div class="empty-state">
+                <p>No data available</p>
+            </div>
+        `;
+        legend.innerHTML = '';
+        return;
+    }
+    
+    // Group by month
+    const monthlyData = {};
+    
+    transactions.forEach(transaction => {
+        const date = new Date(transaction.date);
+        const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        const monthShort = date.toLocaleDateString('en-US', { month: 'short' });
+        
+        if (!monthlyData[monthKey]) {
+            monthlyData[monthKey] = {
+                month: monthShort,
+                income: 0,
+                expense: 0
+            };
+        }
+        
+        if (transaction.type === 'income') {
+            monthlyData[monthKey].income += transaction.amount;
+        } else {
+            monthlyData[monthKey].expense += transaction.amount;
+        }
+    });
+    
+    // Convert to array and sort
+    const chartData = Object.entries(monthlyData)
+        .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+        .slice(-6) // Last 6 months
+        .map(([key, data]) => data);
+    
+    if (chartData.length === 0) {
+        chartContainer.innerHTML = `
+            <div class="empty-state">
+                <p>No data available</p>
+            </div>
+        `;
+        legend.innerHTML = '';
+        return;
+    }
+    
+    // Find max value for scaling
+    const maxValue = Math.max(
+        ...chartData.map(d => Math.max(d.income, d.expense)),
+        1000
+    );
+    const roundedMax = Math.ceil(maxValue / 2500) * 2500;
+    
+    // Create SVG bar chart
+    const width = chartContainer.offsetWidth || 500;
+    const height = 280;
+    const padding = { top: 20, right: 20, bottom: 40, left: 50 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    const barWidth = chartWidth / chartData.length / 2.5;
+    const gap = barWidth * 0.3;
+    
+    let svgHTML = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow: visible;">`;
+    
+    // Draw grid lines
+    const gridLines = [0, 2500, 5000, 7500, 10000];
+    gridLines.forEach(value => {
+        if (value <= roundedMax) {
+            const y = padding.top + chartHeight - (value / roundedMax) * chartHeight;
+            svgHTML += `<line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="2,2"/>`;
+            svgHTML += `<text x="${padding.left - 10}" y="${y + 4}" text-anchor="end" font-size="10" fill="#6b7280">${value}</text>`;
+        }
+    });
+    
+    // Draw bars
+    chartData.forEach((data, index) => {
+        const x = padding.left + (index * (chartWidth / chartData.length)) + (chartWidth / chartData.length - barWidth * 2 - gap) / 2;
+        
+        // Income bar (green)
+        const incomeHeight = (data.income / roundedMax) * chartHeight;
+        const incomeY = padding.top + chartHeight - incomeHeight;
+        svgHTML += `<rect x="${x}" y="${incomeY}" width="${barWidth}" height="${incomeHeight}" fill="#10b981" rx="2"/>`;
+        
+        // Expense bar (red)
+        const expenseHeight = (data.expense / roundedMax) * chartHeight;
+        const expenseY = padding.top + chartHeight - expenseHeight;
+        svgHTML += `<rect x="${x + barWidth + gap}" y="${expenseY}" width="${barWidth}" height="${expenseHeight}" fill="#ef4444" rx="2"/>`;
+        
+        // Month label
+        svgHTML += `<text x="${x + barWidth + gap/2}" y="${height - padding.bottom + 15}" text-anchor="middle" font-size="11" fill="#6b7280" font-weight="500">${data.month}</text>`;
+    });
+    
+    svgHTML += '</svg>';
+    chartContainer.innerHTML = svgHTML;
+    
+    // Update legend
+    legend.innerHTML = `
+        <div class="chart-legend-item" style="display: flex; align-items: center; gap: 0.5rem;">
+            <div style="width: 12px; height: 12px; background-color: #10b981; border-radius: 2px;"></div>
+            <span style="font-size: 0.9rem; color: var(--dark-color);">Income</span>
+        </div>
+        <div class="chart-legend-item" style="display: flex; align-items: center; gap: 0.5rem;">
+            <div style="width: 12px; height: 12px; background-color: #ef4444; border-radius: 2px;"></div>
+            <span style="font-size: 0.9rem; color: var(--dark-color);">Expense</span>
+        </div>
+    `;
 }
 
 async function handleDeleteAccount() {

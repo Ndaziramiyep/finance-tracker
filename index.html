@@ -85,21 +85,22 @@
     <div id="app-container" class="container" style="display: none;">
         <!-- Mobile Header -->
         <div class="mobile-header">
+            <div></div> <!-- Empty div for spacing -->
             <button class="menu-toggle" id="menu-toggle">
                 <i class="fas fa-bars"></i>
             </button>
-            <div class="logo">
-                <i class="fas fa-chart-line"></i>
-                <span>Finance</span>
-            </div>
-            <div></div> <!-- Empty div for spacing -->
         </div>
 
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
-            <div class="logo">
-                <i class="fas fa-chart-line"></i>
-                <span>Finance</span>
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Finance</span>
+                </div>
+                <button class="sidebar-close" id="sidebar-close">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
             <ul class="nav-list">
                 <li class="nav-item">
@@ -144,6 +145,17 @@
         <div class="main-content" id="main-content">
             <!-- Dashboard Page -->
             <div id="dashboard-page" class="page">
+                <!-- Mobile Top Header -->
+                <div class="dashboard-top-header">
+                    <div class="logo">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Finance</span>
+                    </div>
+                    <button class="menu-toggle" id="menu-toggle-dashboard">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+                
                 <div class="page-header">
                     <div>
                         <h1 class="page-title">Welcome back, <span id="dashboard-username">User</span>!</h1>
@@ -181,16 +193,17 @@
                             <option>Last 3 months</option>
                         </select>
                     </div>
-                    <div id="balance-chart" style="height: 250px; position: relative;">
-                        <!-- Simple chart visualization -->
-                        <div id="chart-visualization" style="display: flex; align-items: flex-end; height: 200px; gap: 10px; padding: 20px 0;">
+                    <div id="balance-chart" class="balance-chart-wrapper">
+                        <!-- Chart visualization area -->
+                        <div id="chart-visualization" class="chart-visualization">
                             <div class="loading-spinner">
                                 <div class="spinner"></div>
                             </div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; padding: 0 10px;">
-                            <span>Start</span>
-                            <span>Today</span>
+                        <!-- X-axis labels -->
+                        <div class="chart-x-axis">
+                            <span class="chart-axis-label">Start</span>
+                            <span class="chart-axis-label">Today</span>
                         </div>
                     </div>
                 </div>
@@ -212,6 +225,17 @@
 
             <!-- Transactions Page -->
             <div id="transactions-page" class="page" style="display: none;">
+                <!-- Mobile Top Header -->
+                <div class="dashboard-top-header">
+                    <div class="logo">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Finance</span>
+                    </div>
+                    <button class="menu-toggle" id="menu-toggle-transactions">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+                
                 <div class="page-header">
                     <h1 class="page-title">Transactions</h1>
                     <button class="btn btn-primary" id="add-transaction-btn2">
@@ -255,6 +279,17 @@
 
             <!-- Analytics Page -->
             <div id="analytics-page" class="page" style="display: none;">
+                <!-- Mobile Top Header -->
+                <div class="dashboard-top-header">
+                    <div class="logo">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Finance</span>
+                    </div>
+                    <button class="menu-toggle" id="menu-toggle-analytics">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+                
                 <div class="page-header">
                     <h1 class="page-title">Analytics</h1>
                     <select id="analytics-period" class="form-input" style="width: auto; padding: 0.5rem 1rem;">
@@ -283,21 +318,46 @@
                     </div>
                 </div>
 
-                <div class="chart-container" style="margin-bottom: 1.5rem;">
-                    <h2 class="chart-title">Spending by Category</h2>
-                    <div id="pie-chart" style="height: 300px; display: flex; align-items: center; justify-content: center;">
-                        <div class="loading-spinner">
-                            <div class="spinner"></div>
+                <div class="analytics-charts-grid">
+                    <div class="chart-container">
+                        <h2 class="chart-title">Income vs Expense</h2>
+                        <div id="income-expense-chart" class="bar-chart-container">
+                            <div class="loading-spinner">
+                                <div class="spinner"></div>
+                            </div>
+                        </div>
+                        <div id="income-expense-legend" class="chart-legend">
+                            <!-- Legend will be populated by JavaScript -->
                         </div>
                     </div>
-                    <div id="category-legend" style="display: flex; justify-content: center; gap: 2rem; margin-top: 1rem; flex-wrap: wrap;">
-                        <!-- Category legend will be populated by JavaScript -->
+                    
+                    <div class="chart-container">
+                        <h2 class="chart-title">Spending by Category</h2>
+                        <div id="pie-chart" class="pie-chart-container">
+                            <div class="loading-spinner">
+                                <div class="spinner"></div>
+                            </div>
+                        </div>
+                        <div id="category-legend" class="category-legend-container">
+                            <!-- Category legend will be populated by JavaScript -->
+                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Settings Page -->
             <div id="settings-page" class="page" style="display: none;">
+                <!-- Mobile Top Header -->
+                <div class="dashboard-top-header">
+                    <div class="logo">
+                        <i class="fas fa-chart-line"></i>
+                        <span>Finance</span>
+                    </div>
+                    <button class="menu-toggle" id="menu-toggle-settings">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+                
                 <div class="page-header">
                     <h1 class="page-title">Settings</h1>
                     <p class="page-subtitle">Manage your account preferences and settings</p>
