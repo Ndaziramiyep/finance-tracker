@@ -42,11 +42,22 @@ const toastIcon = document.getElementById('toast-icon');
 const recentTransactionsList = document.getElementById('recent-transactions');
 const allTransactionsList = document.getElementById('all-transactions');
 const deleteAccountBtn = document.getElementById('delete-account-btn');
+const viewAllTransactionsBtn = document.getElementById('view-all-transactions');
+const analyticsPeriod = document.getElementById('analytics-period');
 
 // User data
 let currentUser = null;
 let userTransactions = [];
 let unsubscribeTransactions = null;
+let userPreferences = {
+    currency: 'USD',
+    emailNotifications: true
+};
+
+// Create sidebar overlay for mobile
+const sidebarOverlay = document.createElement('div');
+sidebarOverlay.className = 'sidebar-overlay';
+document.body.appendChild(sidebarOverlay);
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
@@ -54,10 +65,11 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('transaction-date').valueAsDate = new Date();
     
     // Check if user is already logged in
-    auth.onAuthStateChanged((user) => {
+    auth.onAuthStateChanged(async (user) => {
         if (user) {
             // User is signed in
             currentUser = user;
+            await loadUserPreferences();
             showApp();
             updateUserInfo();
             setupRealtimeListeners();
@@ -88,16 +100,18 @@ document.addEventListener('DOMContentLoaded', function() {
             e.currentTarget.classList.add('active');
             
             // Close sidebar on mobile
-            if (window.innerWidth <= 1024) {
-                sidebar.classList.remove('active');
-            }
+            closeMobileSidebar();
         });
     });
 
     // Mobile menu toggle
     menuToggle.addEventListener('click', () => {
-        sidebar.classList.toggle('active');
+        sidebar.classList.add('active');
+        sidebarOverlay.classList.add('active');
     });
+
+    // Close sidebar when clicking overlay
+    sidebarOverlay.addEventListener('click', closeMobileSidebar);
 
     // Transaction modal
     addTransactionBtns.forEach(btn => {
@@ -133,12 +147,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     confirmSignout.addEventListener('click', handleSignOut);
 
+    // View all transactions
+    if (viewAllTransactionsBtn) {
+        viewAllTransactionsBtn.addEventListener('click', () => {
+            showPage('transactions');
+            navLinks.forEach(l => l.classList.remove('active'));
+            document.querySelector('[data-page="transactions"]').classList.add('active');
+            closeMobileSidebar();
+        });
+    }
+
     // Delete account button
-    deleteAccountBtn.addEventListener('click', () => {
-        if (confirm('Are you sure you want to delete your account? This action cannot be undone. All your data will be permanently deleted.')) {
-            deleteUserAccount();
-        }
-    });
+    deleteAccountBtn.addEventListener('click', handleDeleteAccount);
 
     // Search and filter functionality
     document.getElementById('search-transactions')?.addEventListener('input', filterTransactions);
@@ -146,11 +166,18 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('filter-type')?.addEventListener('change', filterTransactions);
 
     // Analytics period change
-    document.getElementById('analytics-period')?.addEventListener('change', updateAnalytics);
+    if (analyticsPeriod) {
+        analyticsPeriod.addEventListener('change', updateAnalytics);
+    }
 
     // Settings functionality
     document.getElementById('currency-select')?.addEventListener('change', updateCurrency);
     document.getElementById('export-data-btn')?.addEventListener('click', exportData);
+    document.getElementById('edit-name-btn')?.addEventListener('click', () => editProfileField('name'));
+    document.getElementById('edit-email-btn')?.addEventListener('click', () => editProfileField('email'));
+    document.getElementById('change-password-btn')?.addEventListener('click', changePassword);
+    document.getElementById('email-notifications')?.addEventListener('change', updateEmailNotifications);
+    document.getElementById('two-factor-auth')?.addEventListener('change', updateTwoFactorAuth);
 
     // Initial page load
     showPage('dashboard');
@@ -229,11 +256,17 @@ async function handleSignUp(e) {
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             preferences: {
                 currency: 'USD',
-                emailNotifications: true
+                emailNotifications: true,
+                twoFactorAuth: false
             }
         });
         
         currentUser = userCredential.user;
+        userPreferences = {
+            currency: 'USD',
+            emailNotifications: true,
+            twoFactorAuth: false
+        };
         showToast('Account created successfully!', 'success');
     } catch (error) {
         let errorMessage = 'Error creating account';
@@ -275,9 +308,15 @@ async function handleGoogleSignIn() {
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 preferences: {
                     currency: 'USD',
-                    emailNotifications: true
+                    emailNotifications: true,
+                    twoFactorAuth: false
                 }
             });
+        } else {
+            const userData = userDoc.data();
+            if (userData.preferences) {
+                userPreferences = userData.preferences;
+            }
         }
         
         showToast('Signed in with Google!', 'success');
@@ -289,6 +328,33 @@ async function handleGoogleSignIn() {
             errorMessage += ': ' + error.message;
         }
         showToast(errorMessage, 'error');
+    }
+}
+
+async function loadUserPreferences() {
+    if (!currentUser) return;
+    
+    try {
+        const userDoc = await db.collection('users').doc(currentUser.uid).get();
+        if (userDoc.exists && userDoc.data().preferences) {
+            userPreferences = userDoc.data().preferences;
+            
+            // Update UI
+            if (document.getElementById('currency-select')) {
+                document.getElementById('currency-select').value = userPreferences.currency || 'USD';
+                document.getElementById('currency-display').textContent = getCurrencyDisplay(userPreferences.currency);
+            }
+            
+            if (document.getElementById('email-notifications')) {
+                document.getElementById('email-notifications').checked = userPreferences.emailNotifications || true;
+            }
+            
+            if (document.getElementById('two-factor-auth')) {
+                document.getElementById('two-factor-auth').checked = userPreferences.twoFactorAuth || false;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading preferences:', error);
     }
 }
 
@@ -375,7 +441,6 @@ function setupRealtimeListeners() {
         }, (error) => {
             console.error('Real-time updates error:', error);
             if (error.code === 'failed-precondition') {
-                // Index might not exist, try without ordering
                 showToast('Loading transactions...', 'info');
                 loadTransactionsWithoutOrder();
             } else {
@@ -438,6 +503,161 @@ function loadTransactions() {
     });
 }
 
+function createTransactionElement(transaction) {
+    const li = document.createElement('li');
+    li.className = 'transaction-item';
+    li.dataset.id = transaction.id;
+    
+    const isIncome = transaction.type === 'income';
+    const amountClass = isIncome ? 'amount-positive' : 'amount-negative';
+    const amountPrefix = isIncome ? '+' : '-';
+    const formattedAmount = formatCurrency(transaction.amount, userPreferences.currency);
+    
+    li.innerHTML = `
+        <div class="transaction-info">
+            <div class="transaction-icon ${getCategoryClass(transaction.category)}">
+                <i class="${transaction.icon}"></i>
+            </div>
+            <div class="transaction-details">
+                <h4>${transaction.description}</h4>
+                <p>${transaction.category}</p>
+            </div>
+        </div>
+        <div class="transaction-amount-date">
+            <div class="transaction-actions">
+                <button class="btn btn-outline btn-sm edit-transaction" data-id="${transaction.id}">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn btn-outline btn-sm delete-transaction" data-id="${transaction.id}">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+            <div>
+                <div class="transaction-amount ${amountClass}">${amountPrefix}${formattedAmount}</div>
+                <div class="transaction-date">${formatDate(transaction.date)}</div>
+            </div>
+        </div>
+    `;
+    
+    // Add event listeners for edit/delete buttons
+    const editBtn = li.querySelector('.edit-transaction');
+    const deleteBtn = li.querySelector('.delete-transaction');
+    
+    editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editTransaction(transaction.id);
+    });
+    
+    deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTransaction(transaction.id, transaction.description);
+    });
+    
+    return li;
+}
+
+async function editTransaction(transactionId) {
+    const transaction = userTransactions.find(t => t.id === transactionId);
+    if (!transaction) return;
+    
+    // Populate modal with transaction data
+    document.querySelector(`input[name="type"][value="${transaction.type}"]`).checked = true;
+    document.getElementById('transaction-amount').value = transaction.amount;
+    document.getElementById('transaction-category').value = transaction.category;
+    document.getElementById('transaction-date').value = transaction.date;
+    document.getElementById('transaction-description').value = transaction.description;
+    
+    // Change modal title and button
+    document.querySelector('#transaction-modal .modal-title').textContent = 'Edit Transaction';
+    document.getElementById('save-transaction').innerHTML = `
+        <span>Update Transaction</span>
+        <span id="save-transaction-spinner" class="spinner" style="display: none;"></span>
+    `;
+    
+    // Store the transaction ID for updating
+    transactionModal.dataset.editingId = transactionId;
+    
+    // Show modal
+    transactionModal.classList.add('active');
+    
+    // Update save button functionality
+    const saveBtn = document.getElementById('save-transaction');
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+    
+    newSaveBtn.addEventListener('click', async () => {
+        await updateTransaction(transactionId);
+    });
+}
+
+async function updateTransaction(transactionId) {
+    const type = document.querySelector('input[name="type"]:checked').value;
+    const amount = parseFloat(document.getElementById('transaction-amount').value);
+    const category = document.getElementById('transaction-category').value;
+    const date = document.getElementById('transaction-date').value;
+    const description = document.getElementById('transaction-description').value.trim();
+    
+    if (!amount || amount <= 0 || !category || !date || !description) {
+        showToast('Please fill in all required fields with valid values', 'error');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('save-transaction');
+    const spinner = document.getElementById('save-transaction-spinner');
+    
+    saveBtn.disabled = true;
+    spinner.style.display = 'inline-block';
+    
+    try {
+        const transactionData = {
+            type: type,
+            amount: amount,
+            category: category,
+            description: description,
+            date: date,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        
+        // Update in Firestore
+        await db.collection('transactions').doc(transactionId).update(transactionData);
+        
+        // Close modal and reset form
+        transactionModal.classList.remove('active');
+        transactionForm.reset();
+        document.getElementById('transaction-date').valueAsDate = new Date();
+        
+        // Reset modal
+        document.querySelector('#transaction-modal .modal-title').textContent = 'Add Transaction';
+        document.getElementById('save-transaction').innerHTML = `
+            <span>Add Transaction</span>
+            <span id="save-transaction-spinner" class="spinner" style="display: none;"></span>
+        `;
+        delete transactionModal.dataset.editingId;
+        
+        showToast('Transaction updated successfully!', 'success');
+    } catch (error) {
+        console.error('Update transaction error:', error);
+        showToast('Error updating transaction. Please try again.', 'error');
+    } finally {
+        saveBtn.disabled = false;
+        spinner.style.display = 'none';
+    }
+}
+
+async function deleteTransaction(transactionId, description) {
+    if (!confirm(`Are you sure you want to delete "${description}"?`)) {
+        return;
+    }
+    
+    try {
+        await db.collection('transactions').doc(transactionId).delete();
+        showToast('Transaction deleted successfully', 'success');
+    } catch (error) {
+        console.error('Delete transaction error:', error);
+        showToast('Error deleting transaction', 'error');
+    }
+}
+
 function showEmptyState() {
     // Dashboard empty state
     recentTransactionsList.innerHTML = `
@@ -445,8 +665,16 @@ function showEmptyState() {
             <i class="fas fa-wallet"></i>
             <h3>No Transactions Yet</h3>
             <p>Start by adding your first transaction</p>
+            <button class="btn btn-primary" style="margin-top: 1rem;" id="add-first-transaction">
+                <i class="fas fa-plus"></i> Add Transaction
+            </button>
         </div>
     `;
+    
+    // Add event listener to the button
+    document.getElementById('add-first-transaction')?.addEventListener('click', () => {
+        transactionModal.classList.add('active');
+    });
     
     // All transactions empty state
     allTransactionsList.innerHTML = `
@@ -494,9 +722,9 @@ function filterTransactions() {
 
 async function updateDashboardStats() {
     if (!currentUser || userTransactions.length === 0) {
-        document.getElementById('total-balance').textContent = formatCurrency(0);
-        document.getElementById('month-income').textContent = formatCurrency(0);
-        document.getElementById('month-expense').textContent = formatCurrency(0);
+        document.getElementById('total-balance').textContent = formatCurrency(0, userPreferences.currency);
+        document.getElementById('month-income').textContent = formatCurrency(0, userPreferences.currency);
+        document.getElementById('month-expense').textContent = formatCurrency(0, userPreferences.currency);
         return;
     }
     
@@ -535,9 +763,9 @@ async function updateDashboardStats() {
         const totalBalance = totalIncome - totalExpense;
         
         // Update UI
-        document.getElementById('total-balance').textContent = formatCurrency(totalBalance);
-        document.getElementById('month-income').textContent = formatCurrency(currentMonthIncome);
-        document.getElementById('month-expense').textContent = formatCurrency(currentMonthExpense);
+        document.getElementById('total-balance').textContent = formatCurrency(totalBalance, userPreferences.currency);
+        document.getElementById('month-income').textContent = formatCurrency(currentMonthIncome, userPreferences.currency);
+        document.getElementById('month-expense').textContent = formatCurrency(currentMonthExpense, userPreferences.currency);
         
         // Update chart visualization
         updateChartVisualization();
@@ -551,42 +779,80 @@ function updateChartVisualization() {
     const chartContainer = document.getElementById('chart-visualization');
     if (!chartContainer) return;
     
-    // Simple chart based on last 7 transactions
-    const recentForChart = userTransactions.slice(0, 7).reverse();
+    // Get last 7 days of transactions
+    const now = new Date();
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(now.getDate() - 7);
     
-    if (recentForChart.length === 0) {
-        chartContainer.innerHTML = `
-            <div class="empty-state" style="width: 100%;">
-                <p>No data for chart</p>
-            </div>
-        `;
-        return;
+    // Group transactions by day
+    const dailyData = {};
+    for (let i = 0; i < 7; i++) {
+        const date = new Date();
+        date.setDate(now.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        dailyData[dateStr] = { income: 0, expense: 0 };
     }
     
+    // Calculate daily totals
+    userTransactions.forEach(transaction => {
+        const transactionDate = new Date(transaction.date).toISOString().split('T')[0];
+        if (dailyData[transactionDate]) {
+            if (transaction.type === 'income') {
+                dailyData[transactionDate].income += transaction.amount;
+            } else {
+                dailyData[transactionDate].expense += transaction.amount;
+            }
+        }
+    });
+    
+    // Convert to array and reverse for chronological order
+    const chartData = Object.entries(dailyData)
+        .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+        .map(([date, data]) => ({
+            date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            income: data.income,
+            expense: data.expense,
+            net: data.income - data.expense
+        }));
+    
     // Find max amount for scaling
-    const maxAmount = Math.max(...recentForChart.map(t => t.amount), 100);
+    const maxNet = Math.max(...chartData.map(d => Math.abs(d.net)), 100);
     
     let chartHTML = '';
-    recentForChart.forEach((transaction, index) => {
-        const heightPercentage = (transaction.amount / maxAmount) * 80;
-        const barColor = transaction.type === 'income' ? 'var(--success-color)' : 'var(--danger-color)';
+    chartData.forEach((data, index) => {
+        const heightPercentage = Math.abs(data.net) / maxNet * 80;
+        const barColor = data.net >= 0 ? 'var(--success-color)' : 'var(--danger-color)';
         
         chartHTML += `
-            <div style="flex: 1; display: flex; flex-direction: column; align-items: center;">
-                <div style="
-                    width: 80%; 
-                    background: linear-gradient(to top, ${barColor}20 ${heightPercentage}%, ${barColor} ${heightPercentage}%);
-                    height: ${heightPercentage}%;
-                    border-radius: 4px 4px 0 0;
-                "></div>
-                <span style="font-size: 0.8rem; margin-top: 5px; color: var(--gray-color);">
-                    ${formatDateShort(transaction.date)}
-                </span>
+            <div class="chart-bar-container">
+                <div class="chart-bar" style="height: ${heightPercentage}%; background-color: ${barColor};"></div>
+                <span class="chart-label">${data.date}</span>
             </div>
         `;
     });
     
     chartContainer.innerHTML = chartHTML;
+    
+    // Update legend
+    const legend = document.createElement('div');
+    legend.className = 'chart-legend';
+    legend.innerHTML = `
+        <div class="chart-legend-item">
+            <div class="chart-legend-color" style="background-color: var(--success-color);"></div>
+            <span>Income</span>
+        </div>
+        <div class="chart-legend-item">
+            <div class="chart-legend-color" style="background-color: var(--danger-color);"></div>
+            <span>Expense</span>
+        </div>
+    `;
+    
+    // Remove existing legend and add new one
+    const existingLegend = chartContainer.querySelector('.chart-legend');
+    if (existingLegend) {
+        existingLegend.remove();
+    }
+    chartContainer.appendChild(legend);
 }
 
 async function updateAnalytics() {
@@ -615,6 +881,7 @@ async function updateAnalytics() {
         switch(period) {
             case 'last':
                 startDate.setMonth(startDate.getMonth() - 1);
+                startDate.setDate(1);
                 break;
             case 'quarter':
                 startDate.setMonth(startDate.getMonth() - 3);
@@ -670,7 +937,7 @@ async function updateAnalytics() {
         // Update UI
         document.getElementById('top-category').textContent = topCategory;
         document.getElementById('top-category-details').textContent = 
-            `${formatCurrency(topAmount)} (${totalExpenses > 0 ? 
+            `${formatCurrency(topAmount, userPreferences.currency)} (${totalExpenses > 0 ? 
                 Math.round((topAmount / totalExpenses * 100)) : 0}% of expenses)`;
         
         document.getElementById('savings-rate').textContent = `${savingsRate}%`;
@@ -703,7 +970,7 @@ function updatePieChart(categoryTotals) {
         return;
     }
     
-    // Calculate percentages and colors
+    // Calculate percentages
     const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
     const colors = [
         'var(--primary-color)',
@@ -712,41 +979,55 @@ function updatePieChart(categoryTotals) {
         'var(--danger-color)',
         '#8b5cf6',
         '#db2777',
-        '#0ea5e9'
+        '#0ea5e9',
+        '#10b981',
+        '#f59e0b'
     ];
     
-    // Build conic gradient
-    let gradientString = '';
-    let accumulatedPercentage = 0;
+    // Create pie chart segments
+    let accumulatedAngle = 0;
+    const segments = [];
     const categoriesArray = Object.entries(categoryTotals);
     
     categoriesArray.forEach(([category, amount], index) => {
         const percentage = (amount / total) * 100;
-        const startPercent = accumulatedPercentage;
-        const endPercent = startPercent + percentage;
+        const angle = (percentage / 100) * 360;
         
-        gradientString += `${colors[index % colors.length]} ${startPercent}% ${endPercent}%`;
-        if (index < categoriesArray.length - 1) {
-            gradientString += ', ';
-        }
+        segments.push({
+            category,
+            amount,
+            percentage,
+            color: colors[index % colors.length],
+            startAngle: accumulatedAngle,
+            endAngle: accumulatedAngle + angle
+        });
         
-        accumulatedPercentage = endPercent;
+        accumulatedAngle += angle;
     });
     
-    // Update pie chart
-    pieChart.innerHTML = `
-        <div style="width: 200px; height: 200px; border-radius: 50%; 
-                    background: conic-gradient(${gradientString});"></div>
+    // Create pie chart visualization
+    const pieChartHTML = `
+        <div class="pie-chart-visual">
+            ${segments.map(segment => `
+                <div class="pie-segment" style="
+                    background-color: ${segment.color};
+                    transform: rotate(${segment.startAngle}deg);
+                    clip-path: polygon(50% 50%, 50% 0%, ${50 + 50 * Math.cos(segment.startAngle * Math.PI / 180)}% ${50 + 50 * Math.sin(segment.startAngle * Math.PI / 180)}%);
+                "></div>
+            `).join('')}
+        </div>
     `;
+    
+    pieChart.innerHTML = pieChartHTML;
     
     // Update legend
     let legendHTML = '';
-    categoriesArray.forEach(([category, amount], index) => {
-        const percentage = Math.round((amount / total) * 100);
+    segments.forEach(segment => {
+        const roundedPercentage = Math.round(segment.percentage);
         legendHTML += `
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <div style="width: 12px; height: 12px; background-color: ${colors[index % colors.length]}; border-radius: 2px;"></div>
-                <span>${category} (${percentage}%)</span>
+            <div class="category-legend-item">
+                <div class="category-color" style="background-color: ${segment.color};"></div>
+                <span>${segment.category} (${roundedPercentage}%)</span>
             </div>
         `;
     });
@@ -754,8 +1035,10 @@ function updatePieChart(categoryTotals) {
     legend.innerHTML = legendHTML;
 }
 
-async function deleteUserAccount() {
-    if (!currentUser) return;
+async function handleDeleteAccount() {
+    if (!confirm('Are you sure you want to delete your account? This action cannot be undone. All your data will be permanently deleted.')) {
+        return;
+    }
     
     const deleteBtn = document.getElementById('delete-account-btn');
     const originalText = deleteBtn.innerHTML;
@@ -824,10 +1107,352 @@ async function handleSignOut() {
         signoutModal.classList.remove('active');
         showToast('Signed out successfully', 'success');
         userTransactions = [];
+        closeMobileSidebar();
     } catch (error) {
         console.error('Sign out error:', error);
         showToast('Error signing out: ' + error.message, 'error');
     }
+}
+
+// Settings Functions
+async function editProfileField(field) {
+    let title, currentValue, inputType, placeholder;
+    
+    if (field === 'name') {
+        title = 'Edit Full Name';
+        currentValue = currentUser.displayName || '';
+        inputType = 'text';
+        placeholder = 'Enter your full name';
+    } else if (field === 'email') {
+        title = 'Edit Email Address';
+        currentValue = currentUser.email || '';
+        inputType = 'email';
+        placeholder = 'Enter your email address';
+    } else {
+        return;
+    }
+    
+    // Create modal for editing
+    const modalHTML = `
+        <div class="modal active" id="edit-profile-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">${title}</h2>
+                    <button class="close-modal" id="close-edit-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form class="edit-form">
+                        <div class="form-group">
+                            <label class="form-label" for="edit-value">New ${field === 'name' ? 'Name' : 'Email'}</label>
+                            <input type="${inputType}" id="edit-value" class="form-input" value="${currentValue}" placeholder="${placeholder}" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" id="cancel-edit">Cancel</button>
+                    <button class="btn btn-primary" id="save-edit">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Add modal to DOM
+    const modalContainer = document.createElement('div');
+    modalContainer.innerHTML = modalHTML;
+    document.body.appendChild(modalContainer);
+    
+    // Get modal elements
+    const editModal = document.getElementById('edit-profile-modal');
+    const closeEditModal = document.getElementById('close-edit-modal');
+    const cancelEdit = document.getElementById('cancel-edit');
+    const saveEdit = document.getElementById('save-edit');
+    const editValue = document.getElementById('edit-value');
+    
+    // Event listeners
+    const closeModal = () => {
+        editModal.remove();
+    };
+    
+    closeEditModal.addEventListener('click', closeModal);
+    cancelEdit.addEventListener('click', closeModal);
+    
+    saveEdit.addEventListener('click', async () => {
+        const newValue = editValue.value.trim();
+        
+        if (!newValue) {
+            showToast('Please enter a value', 'error');
+            return;
+        }
+        
+        if (field === 'email' && !isValidEmail(newValue)) {
+            showToast('Please enter a valid email address', 'error');
+            return;
+        }
+        
+        const saveBtn = saveEdit;
+        const originalText = saveBtn.innerHTML;
+        saveBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div>';
+        saveBtn.disabled = true;
+        
+        try {
+            if (field === 'name') {
+                await currentUser.updateProfile({
+                    displayName: newValue
+                });
+                
+                // Update user document in Firestore
+                await db.collection('users').doc(currentUser.uid).update({
+                    name: newValue
+                });
+                
+                updateUserInfo();
+                showToast('Name updated successfully', 'success');
+            } else if (field === 'email') {
+                await currentUser.updateEmail(newValue);
+                
+                // Update user document in Firestore
+                await db.collection('users').doc(currentUser.uid).update({
+                    email: newValue
+                });
+                
+                updateUserInfo();
+                showToast('Email updated successfully', 'success');
+            }
+            
+            closeModal();
+        } catch (error) {
+            console.error(`Update ${field} error:`, error);
+            let errorMessage = `Error updating ${field}`;
+            
+            if (error.code === 'auth/requires-recent-login') {
+                errorMessage = 'Please sign in again to update your email';
+            } else if (error.code === 'auth/email-already-in-use') {
+                errorMessage = 'Email already in use';
+            }
+            
+            showToast(errorMessage, 'error');
+        } finally {
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+        }
+    });
+    
+    // Close modal when clicking outside
+    editModal.addEventListener('click', (e) => {
+        if (e.target === editModal) {
+            closeModal();
+        }
+    });
+}
+
+async function changePassword() {
+    // Create modal for changing password
+    const modalHTML = `
+        <div class="modal active" id="change-password-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title">Change Password</h2>
+                    <button class="close-modal" id="close-password-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form class="edit-form">
+                        <div class="form-group">
+                            <label class="form-label" for="current-password">Current Password</label>
+                            <input type="password" id="current-password" class="form-input" placeholder="Enter current password" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="new-password">New Password</label>
+                            <input type="password" id="new-password" class="form-input" placeholder="Enter new password" required>
+                            <div class="password-requirement">Password must be at least 8 characters long</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="confirm-password">Confirm New Password</label>
+                            <input type="password" id="confirm-password" class="form-input" placeholder="Confirm new password" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" id="cancel-password">Cancel</button>
+                    <button class="btn btn-primary" id="save-password">Change Password</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Add modal to DOM
+    const modalContainer = document.createElement('div');
+    modalContainer.innerHTML = modalHTML;
+    document.body.appendChild(modalContainer);
+    
+    // Get modal elements
+    const passwordModal = document.getElementById('change-password-modal');
+    const closePasswordModal = document.getElementById('close-password-modal');
+    const cancelPassword = document.getElementById('cancel-password');
+    const savePassword = document.getElementById('save-password');
+    const currentPassword = document.getElementById('current-password');
+    const newPassword = document.getElementById('new-password');
+    const confirmPassword = document.getElementById('confirm-password');
+    
+    // Event listeners
+    const closeModal = () => {
+        passwordModal.remove();
+    };
+    
+    closePasswordModal.addEventListener('click', closeModal);
+    cancelPassword.addEventListener('click', closeModal);
+    
+    savePassword.addEventListener('click', async () => {
+        const currentPass = currentPassword.value;
+        const newPass = newPassword.value;
+        const confirmPass = confirmPassword.value;
+        
+        if (!currentPass || !newPass || !confirmPass) {
+            showToast('Please fill in all fields', 'error');
+            return;
+        }
+        
+        if (newPass.length < 8) {
+            showToast('New password must be at least 8 characters long', 'error');
+            return;
+        }
+        
+        if (newPass !== confirmPass) {
+            showToast('New passwords do not match', 'error');
+            return;
+        }
+        
+        const saveBtn = savePassword;
+        const originalText = saveBtn.innerHTML;
+        saveBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div>';
+        saveBtn.disabled = true;
+        
+        try {
+            // Re-authenticate user
+            const credential = firebase.auth.EmailAuthProvider.credential(
+                currentUser.email,
+                currentPass
+            );
+            
+            await currentUser.reauthenticateWithCredential(credential);
+            
+            // Update password
+            await currentUser.updatePassword(newPass);
+            
+            showToast('Password changed successfully', 'success');
+            closeModal();
+        } catch (error) {
+            console.error('Change password error:', error);
+            let errorMessage = 'Error changing password';
+            
+            if (error.code === 'auth/wrong-password') {
+                errorMessage = 'Current password is incorrect';
+            } else if (error.code === 'auth/weak-password') {
+                errorMessage = 'New password is too weak';
+            }
+            
+            showToast(errorMessage, 'error');
+        } finally {
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+        }
+    });
+    
+    // Close modal when clicking outside
+    passwordModal.addEventListener('click', (e) => {
+        if (e.target === passwordModal) {
+            closeModal();
+        }
+    });
+}
+
+async function updateCurrency() {
+    const currency = document.getElementById('currency-select').value;
+    
+    try {
+        // Update in Firestore
+        await db.collection('users').doc(currentUser.uid).update({
+            'preferences.currency': currency
+        });
+        
+        userPreferences.currency = currency;
+        document.getElementById('currency-display').textContent = getCurrencyDisplay(currency);
+        
+        // Update UI with new currency
+        updateDashboardStats();
+        loadTransactions();
+        
+        showToast('Currency preference updated', 'success');
+    } catch (error) {
+        console.error('Update currency error:', error);
+        showToast('Error updating currency preference', 'error');
+    }
+}
+
+async function updateEmailNotifications() {
+    const enabled = document.getElementById('email-notifications').checked;
+    
+    try {
+        // Update in Firestore
+        await db.collection('users').doc(currentUser.uid).update({
+            'preferences.emailNotifications': enabled
+        });
+        
+        userPreferences.emailNotifications = enabled;
+        showToast(`Email notifications ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (error) {
+        console.error('Update email notifications error:', error);
+        showToast('Error updating email notifications', 'error');
+    }
+}
+
+async function updateTwoFactorAuth() {
+    const enabled = document.getElementById('two-factor-auth').checked;
+    
+    try {
+        // Update in Firestore
+        await db.collection('users').doc(currentUser.uid).update({
+            'preferences.twoFactorAuth': enabled
+        });
+        
+        userPreferences.twoFactorAuth = enabled;
+        showToast(`Two-factor authentication ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (error) {
+        console.error('Update two-factor auth error:', error);
+        showToast('Error updating two-factor authentication', 'error');
+    }
+}
+
+function exportData() {
+    if (userTransactions.length === 0) {
+        showToast('No transactions to export', 'info');
+        return;
+    }
+    
+    // Convert transactions to CSV
+    const headers = ['Date', 'Type', 'Category', 'Description', 'Amount'];
+    const csvData = [
+        headers.join(','),
+        ...userTransactions.map(t => [
+            t.date,
+            t.type,
+            t.category,
+            `"${t.description.replace(/"/g, '""')}"`,
+            t.amount
+        ].join(','))
+    ].join('\n');
+    
+    // Create download link
+    const blob = new Blob([csvData], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    
+    showToast('Data exported successfully', 'success');
 }
 
 // Helper Functions
@@ -854,6 +1479,11 @@ function showAuth() {
     // Reset user data
     currentUser = null;
     userTransactions = [];
+    userPreferences = {
+        currency: 'USD',
+        emailNotifications: true,
+        twoFactorAuth: false
+    };
     
     // Unsubscribe from listeners
     if (unsubscribeTransactions) {
@@ -865,11 +1495,7 @@ function showAuth() {
 function showApp() {
     authContainer.style.display = 'none';
     appContainer.style.display = 'flex';
-    
-    // Close sidebar on mobile
-    if (window.innerWidth <= 1024) {
-        sidebar.classList.remove('active');
-    }
+    closeMobileSidebar();
 }
 
 function updateUserInfo() {
@@ -938,12 +1564,33 @@ function getCategoryClass(category) {
     }
 }
 
-function formatCurrency(amount) {
+function formatCurrency(amount, currency = 'USD') {
+    const currencySymbols = {
+        'USD': '$',
+        'EUR': '€',
+        'GBP': '£',
+        'JPY': '¥'
+    };
+    
+    const symbol = currencySymbols[currency] || '$';
+    
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 2
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
     }).format(amount);
+}
+
+function getCurrencyDisplay(currency) {
+    const currencyNames = {
+        'USD': 'US Dollar (USD)',
+        'EUR': 'Euro (EUR)',
+        'GBP': 'British Pound (GBP)',
+        'JPY': 'Japanese Yen (JPY)'
+    };
+    
+    return currencyNames[currency] || 'US Dollar (USD)';
 }
 
 function formatDate(dateString) {
@@ -959,37 +1606,9 @@ function formatDate(dateString) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function formatDateShort(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function createTransactionElement(transaction) {
-    const li = document.createElement('li');
-    li.className = 'transaction-item';
-    li.dataset.id = transaction.id;
-    
-    const isIncome = transaction.type === 'income';
-    const amountClass = isIncome ? 'amount-positive' : 'amount-negative';
-    const amountPrefix = isIncome ? '+' : '-';
-    
-    li.innerHTML = `
-        <div class="transaction-info">
-            <div class="transaction-icon ${getCategoryClass(transaction.category)}">
-                <i class="${transaction.icon}"></i>
-            </div>
-            <div class="transaction-details">
-                <h4>${transaction.description}</h4>
-                <p>${transaction.category}</p>
-            </div>
-        </div>
-        <div>
-            <div class="transaction-amount ${amountClass}">${amountPrefix}${formatCurrency(transaction.amount)}</div>
-            <div class="transaction-date">${formatDate(transaction.date)}</div>
-        </div>
-    `;
-    
-    return li;
+function isValidEmail(email) {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
 }
 
 function showToast(message, type = 'success') {
@@ -1018,63 +1637,29 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-function updateCurrency() {
-    const currency = document.getElementById('currency-select').value;
-    document.getElementById('currency-display').textContent = 
-        currency === 'USD' ? 'US Dollar (USD)' :
-        currency === 'EUR' ? 'Euro (EUR)' :
-        currency === 'GBP' ? 'British Pound (GBP)' :
-        'Japanese Yen (JPY)';
-    
-    showToast('Currency preference updated', 'success');
+function closeMobileSidebar() {
+    sidebar.classList.remove('active');
+    sidebarOverlay.classList.remove('active');
 }
-
-function exportData() {
-    if (userTransactions.length === 0) {
-        showToast('No transactions to export', 'info');
-        return;
-    }
-    
-    // Convert transactions to CSV
-    const headers = ['Date', 'Type', 'Category', 'Description', 'Amount'];
-    const csvData = [
-        headers.join(','),
-        ...userTransactions.map(t => [
-            t.date,
-            t.type,
-            t.category,
-            `"${t.description.replace(/"/g, '""')}"`,
-            t.amount
-        ].join(','))
-    ].join('\n');
-    
-    // Create download link
-    const blob = new Blob([csvData], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-    
-    showToast('Data exported successfully', 'success');
-}
-
-// Close sidebar when clicking outside on mobile
-document.addEventListener('click', (e) => {
-    if (window.innerWidth <= 1024 && 
-        !sidebar.contains(e.target) && 
-        !menuToggle.contains(e.target) && 
-        sidebar.classList.contains('active')) {
-        sidebar.classList.remove('active');
-    }
-});
 
 // Handle window resize
 window.addEventListener('resize', () => {
     if (window.innerWidth > 1024) {
-        sidebar.classList.remove('active');
+        closeMobileSidebar();
+    }
+});
+
+// Prevent body scroll when sidebar is open on mobile
+sidebar.addEventListener('transitionstart', () => {
+    if (sidebar.classList.contains('active')) {
+        document.body.style.overflow = 'hidden';
+    } else {
+        document.body.style.overflow = '';
+    }
+});
+
+sidebar.addEventListener('transitionend', () => {
+    if (!sidebar.classList.contains('active')) {
+        document.body.style.overflow = '';
     }
 });
